@@ -1,0 +1,176 @@
+// File: src/BidTrackerApp.jsx
+
+import { useState } from "react";
+
+export default function BidTrackerApp() {
+  const [bids, setBids] = useState([]);
+  const [clientFilter, setClientFilter] = useState("");
+  const [threshold, setThreshold] = useState(14);
+
+  // Compute overall summary
+  function computeSummary() {
+    const totalBid = bids.reduce((sum, b) => sum + b.amount, 0);
+    const awarded = bids
+      .filter((b) => b.status === "Awarded")
+      .reduce((sum, b) => sum + b.amount, 0);
+    const lost = bids
+      .filter((b) => b.status === "Lost")
+      .reduce((sum, b) => sum + b.amount, 0);
+    const cancelled = bids
+      .filter((b) => b.status === "Cancelled")
+      .reduce((sum, b) => sum + b.amount, 0);
+    const pending = bids
+      .filter((b) => !["Awarded", "Lost", "Cancelled"].includes(b.status))
+      .reduce((sum, b) => sum + b.amount, 0);
+    const awardRate = totalBid
+      ? ((awarded / totalBid) * 100).toFixed(2)
+      : "0.00";
+    const lossRate = totalBid
+      ? ((lost / totalBid) * 100).toFixed(2)
+      : "0.00";
+    return { totalBid, awarded, lost, cancelled, pending, awardRate, lossRate };
+  }
+
+  // Compute per-client summary
+  function computeClientSummary() {
+    const summary = {};
+    bids.forEach((b) => {
+      const clients = typeof b.client === "string"
+        ? b.client.split(",").map((c) => c.trim())
+        : b.client;
+      clients.forEach((client) => {
+        if (!summary[client]) {
+          summary[client] = { totalBid: 0, awarded: 0, lost: 0, cancelled: 0, pending: 0 };
+        }
+        summary[client].totalBid += b.amount;
+        if (b.status === "Awarded") summary[client].awarded += b.amount;
+        else if (b.status === "Lost") summary[client].lost += b.amount;
+        else if (b.status === "Cancelled") summary[client].cancelled += b.amount;
+        else summary[client].pending += b.amount;
+      });
+    });
+    return summary;
+  }
+
+  // Handle file upload (dummy API)
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/upload", { method: "POST", body: formData });
+    const data = await res.json();
+    setBids(data.bids);
+  };
+
+  // Send follow-up (alerts for demo)
+  function sendFollowUps() {
+    const cutoff = new Date(Date.now() - threshold * 24 * 60 * 60 * 1000);
+    const toFollow = bids.filter((b) => !b.status && new Date(b.bidDueDate) < cutoff);
+    const grouped = {};
+    toFollow.forEach((b) => {
+      const clients = typeof b.client === "string"
+        ? b.client.split(",").map((c) => c.trim())
+        : b.client;
+      clients.forEach((client) => {
+        if (!grouped[client]) grouped[client] = [];
+        grouped[client].push(b.project);
+      });
+    });
+    Object.entries(grouped).forEach(([client, projs]) => {
+      alert(`Follow-up to ${client}: ${projs.join(", ")}`);
+    });
+  }
+
+  const summaryData = computeSummary();
+  const clientSummary = computeClientSummary();
+  const filtered = clientFilter
+    ? bids.filter((b) =>
+        (typeof b.client === "string"
+          ? b.client.split(",").map((c) => c.trim())
+          : b.client
+        ).some((c) =>
+          c.toLowerCase().includes(clientFilter.toLowerCase())
+        )
+      )
+    : bids;
+
+  return (
+    <div style={{ padding: 20, fontFamily: "Arial, sans-serif" }}>
+      <h1>Bid Tracker</h1>
+      <div style={{ marginBottom: 10 }}>
+        <input type="file" onChange={handleFileUpload} />
+        <input
+          placeholder="Filter by client"
+          value={clientFilter}
+          onChange={(e) => setClientFilter(e.target.value)}
+          style={{ marginLeft: 10 }}
+        />
+        <input
+          type="number"
+          min={1}
+          value={threshold}
+          onChange={(e) => setThreshold(Number(e.target.value) || 1)}
+          style={{ marginLeft: 10, width: 60 }}
+        />
+        <button onClick={sendFollowUps} style={{ marginLeft: 10 }}>
+          Send Follow-Ups
+        </button>
+      </div>
+
+      <h2>Overall Summary</h2>
+      <ul>
+        <li>Total Bids: ${summaryData.totalBid.toLocaleString()}</li>
+        <li>Awarded: ${summaryData.awarded.toLocaleString()}</li>
+        <li>Lost: ${summaryData.lost.toLocaleString()}</li>
+        <li>Cancelled: ${summaryData.cancelled.toLocaleString()}</li>
+        <li>Pending: ${summaryData.pending.toLocaleString()}</li>
+        <li>Award Rate: {summaryData.awardRate}%</li>
+        <li>Loss Rate: {summaryData.lossRate}%</li>
+      </ul>
+
+      <h2>Client Summary</h2>
+      <ul>
+        {Object.entries(clientSummary).map(([client, stats]) => (
+          <li key={client}>
+            {client}: Total ${stats.totalBid.toLocaleString()}, Awarded ${stats.awarded.toLocaleString()},
+            Lost ${stats.lost.toLocaleString()}, Cancelled ${stats.cancelled.toLocaleString()},
+            Pending ${stats.pending.toLocaleString()}
+          </li>
+        ))}
+      </ul>
+
+      <h2>Bids</h2>
+      <table
+        border={1}
+        cellPadding={5}
+        style={{ borderCollapse: "collapse", width: "100%" }}
+      >
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Client</th>
+            <th>Estimator</th>
+            <th>Status</th>
+            <th>Amount</th>
+            <th>Due Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map((b, idx) => (
+            <tr key={idx}>
+              <td>{b.project}</td>
+              <td>
+                {Array.isArray(b.client) ? b.client.join(", ") : b.client}
+              </td>
+              <td>{b.estimator}</td>
+              <td>{b.status || "No Status"}</td>
+              <td>${b.amount.toLocaleString()}</td>
+              <td>{b.bidDueDate}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
